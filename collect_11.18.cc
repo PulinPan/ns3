@@ -139,9 +139,9 @@ myHeader::Deserialize (Buffer::Iterator start)
 void 
 WQE_send(uint32_t xc_sequence,uint32_t xc_lenth,
 	uint64_t xc_src_addr,uint64_t xc_dst_addr, uint32_t xc_src_port, uint32_t xc_dst_port,
-	Ptr<Socket> sock, Address remoteAddress)
+	Ptr<Socket> sock)
 {
-	cout<<"WQE_send"<<endl;
+	std::cout <<" Server send a WQE at " << Simulator::Now ().GetSeconds () <<"s"<< std::endl;
 	myHeader header;
 	header.flag = WQE;
 	header.lenth = xc_lenth;
@@ -152,9 +152,9 @@ WQE_send(uint32_t xc_sequence,uint32_t xc_lenth,
 	header.dst_port = xc_dst_port;
 	Ptr<Packet> packet = Create<Packet>(0);
 	packet->AddHeader(header);
-	cout<<"send"<<endl;
+	//cout<<"send"<<endl;
 	sock->Send(packet);
-	cout<<"send finished"<<endl;
+	//cout<<"send finished"<<endl;
 }
 
 void
@@ -174,7 +174,7 @@ Data_send(myHeader xc_header, uint32_t xc_size, Ptr<Socket> sock)
 	header.flag = Data;
 	Ptr<Packet> packet = Create<Packet>(xc_size);
 	packet->AddHeader(header);
-	cout<<"wu send packet with lenth of:"<<xc_size<<"  src_addr="<<header.src_addr<<"  dst_addr="<<header.dst_addr<<endl;
+	cout<<"Server send packet with lenth of:"<<xc_size<<"  src_addr="<<header.src_addr<<"  dst_addr="<<header.dst_addr<<endl;
 	sock->Send(packet);
 }
 
@@ -190,17 +190,23 @@ ACK_send(myHeader xc_header, Ptr<Socket> sock)
 }
 
 void
-GED_send(myHeader xc_header, Ptr<Socket> sock, uint32_t size)
+GED_send(myHeader xc_header, Ptr<Socket> sock, uint32_t MSS, uint32_t cwnd)
 {
+	if(cwnd>0)
+{
+	std::cout << "at=" << Simulator::Now ().GetSeconds () << "s,Client send GED of src_addr:" << xc_header.src_addr << std::endl;
 	myHeader header;
 	header = xc_header;
-	header.lenth = size;//复用lenth位
+	header.lenth = MSS;//复用lenth位
 	header.flag = GED;
 	Ptr<Packet> packet = Create<Packet>(0);
 	packet->AddHeader(header);
 	sock->Send(packet);
-	cout<<(Simulator::Now ()).GetSeconds ()<<endl;
-	cout<<"you Send GED : src_addr:"<<header.src_addr<<"  dst_addr:"<<header.dst_addr<<endl;
+	cwnd--;
+	header.src_addr+=MSS;
+	header.dst_addr+=MSS;
+	Simulator::Schedule (Seconds (0.5), &GED_send, header, sock, MSS, cwnd);
+}
 }
 
 // void
@@ -216,6 +222,7 @@ GED_send(myHeader xc_header, Ptr<Socket> sock, uint32_t size)
 void
 WQE_recv(Ptr<Packet> packet, Ptr<Socket> sock)
 {
+	//std::cout <<" WQE_recv" << Simulator::Now ().GetSeconds () << std::endl;
 	myHeader header;
 	packet->PeekHeader(header);
 	// wqe_node* tail;
@@ -226,22 +233,23 @@ WQE_recv(Ptr<Packet> packet, Ptr<Socket> sock)
 	// tail->sequence = header.sequence;
 	// tail->dst_port = header.dst_port;
 	// tail->src_port = header.src_port;
-	EA_send(header,sock);
-	uint32_t MSS=1,cwnd=10,total_len;
-	total_len = header.lenth;
+	//EA_send(header,sock);
+	uint32_t MSS=1,cwnd=10;//total_len;
+	//total_len = header.lenth;
 	myHeader GED_header;
 	GED_header = header;
 	GED_header.flag = GED;
-	while(total_len>0)
-	{
-		for(uint32_t i=0;i<(total_len<cwnd? total_len:cwnd);i++)
-		{
-			GED_send(GED_header,sock,MSS);
-			GED_header.src_addr+=MSS;
-			GED_header.dst_addr+=MSS;
-		}
-		total_len-=cwnd;
-	}
+	GED_send(GED_header,sock,MSS,cwnd);
+	// while(total_len>0)
+	// {
+	// 	for(uint32_t i=0;i<(total_len<cwnd? total_len:cwnd);i++)
+	// 	{
+	// 		GED_send(GED_header,sock,MSS);
+	// 		GED_header.src_addr+=MSS;
+	// 		GED_header.dst_addr+=MSS;
+	// 	}
+	// 	total_len-=cwnd;
+	// }
 
 }
 
@@ -255,7 +263,7 @@ Data_recv(Ptr<Packet> packet, Ptr<Socket> sock)
 {
 	myHeader header;
 	packet->PeekHeader(header);
-	cout<<"recv packet :"
+	cout<<"at "<<Simulator::Now ().GetSeconds ()<<"s Client recv packet :"
 	<<" src_addr:"<<header.src_addr
 	<<" size:"<<packet->GetSize()<<endl;
 	Ptr<Packet> ack = Create<Packet>(0);
@@ -269,14 +277,14 @@ ACK_recv(Ptr<Packet> packet)
 {
 	myHeader header;
 	packet->PeekHeader(header);
-	cout<<"recv ack :"
+	cout<<"at "<<Simulator::Now ().GetSeconds ()<<"s client recv ack :"
 	<<" src_addr:"<<header.src_addr<<endl;
 }
 
 void
  GED_recv(myHeader header, Ptr<Socket> sock)
  {
- 	cout<<(Simulator::Now ()).GetSeconds ()<<endl;
+ 	//cout<<(Simulator::Now ()).GetSeconds ()<<endl;
  	Data_send(header,header.lenth,sock);
  }
 
@@ -331,7 +339,7 @@ Host:: ~Host(){
 }
 
 void Host::run(){
-	Simulator::Schedule (Seconds(10.0), &Host::writeTest, this);
+	Simulator::Schedule (Seconds(1.0), &Host::writeTest, this);
 }
 
 void Host::writeTest(){
@@ -352,8 +360,7 @@ void Host::setRemoteAddress(Address addr){
 
 
 void Host::write(uint64_t address1,uint64_t address2,uint32_t length){
-	    cout<<"write"<<endl;
-	    std::cout <<" " << Simulator::Now ().GetSeconds () << std::endl;
+	    std::cout <<"write a WQE at:"<<" " << Simulator::Now ().GetSeconds () <<"s"<< std::endl;
 		// wqe_node newnode;
 		// newnode.len=length;
 		// newnode.source_address=address1;
@@ -365,7 +372,7 @@ void Host::write(uint64_t address1,uint64_t address2,uint32_t length){
 		// 	head=&newnode;
 		// }
 		uint32_t sequence=0;
-		WQE_send(sequence++,length,address1,address2,0,1,sock,remoteAddress);		
+		WQE_send(sequence++,length,address1,address2,0,1,sock);		
 }
 
 void Host::read(uint64_t address1,uint64_t address2,uint32_t length){
@@ -406,9 +413,9 @@ wqe_node* Host::getend(){
 	return end;
 }
 
-void YouRecv(Ptr<Socket> sock)
+void ClientRecv(Ptr<Socket> sock)
 {
-  cout<<"YouRecv"<<endl;
+  //cout<<"ClientRecv"<<endl;
   Ptr<Packet> packet;
   while (packet = sock->Recv())
   {
@@ -416,7 +423,7 @@ void YouRecv(Ptr<Socket> sock)
     packet->PeekHeader(header);
     switch(header.flag)
     {
-      case 0: cout<<"you recv a WQE!"<<endl;WQE_recv(packet, sock); break;
+      case 0: cout<<"Client recv a WQE!"<<endl;WQE_recv(packet, sock); break;
       //case 1: EA_recv(header);break;
       case 2: Data_recv(packet, sock);break;
       case 3: ACK_recv(packet);break;
@@ -425,9 +432,9 @@ void YouRecv(Ptr<Socket> sock)
   }
 }
 
-void wuRecv(Ptr<Socket> sock)
+void ServerRecv(Ptr<Socket> sock)
 {
-  cout<<"wuRecv"<<endl;
+  //cout<<"ServerRecv"<<endl;
   Ptr<Packet> packet;
   while(packet = sock->Recv())
   {
@@ -435,7 +442,7 @@ void wuRecv(Ptr<Socket> sock)
     packet->PeekHeader(header);
     switch(header.flag)
     {
-      case 3:cout<<"wu recv a GED"<<endl; GED_recv(header,sock);break;
+      case 3:std::cout << "at=" << Simulator::Now ().GetSeconds () << "s, Server recv GED of src_addr:" << header.src_addr << std::endl;GED_recv(header,sock);break;
       case 5:ACK_recv(packet);break;
       default:cout<<"recv error!"<<endl;
     }
@@ -451,7 +458,7 @@ int main(){
 
   PointToPointHelper pointToPoint;
   pointToPoint.SetDeviceAttribute ("DataRate", StringValue ("500Mbps"));
-  pointToPoint.SetChannelAttribute ("Delay", StringValue ("2ms"));
+  pointToPoint.SetChannelAttribute ("Delay", StringValue ("1000ms"));
 
   NetDeviceContainer devices;
   devices = pointToPoint.Install (nodes);
@@ -465,38 +472,37 @@ int main(){
   //server sockets
   TypeId tid = TypeId::LookupByName("ns3::UdpSocketFactory");
   Ptr<Socket> server = Socket::CreateSocket(nodes.Get(0), tid);
-  InetSocketAddress addr = InetSocketAddress(interfaces.GetAddress(1), 10086);
+  InetSocketAddress addr = InetSocketAddress(interfaces.GetAddress(0), 10086);
 
   Ptr<Socket> client = Socket::CreateSocket(nodes.Get(1), tid);
-  // InetSocketAddress clientAddr = InetSocketAddress(interfaces.GetAddress(1), 10086);
-  client->Bind(addr);
+   InetSocketAddress clientAddr = InetSocketAddress(interfaces.GetAddress(1), 10086);
+  client->Bind(clientAddr); 
+  server->Bind(addr);
 
-  // client->Connect(addr);
-  // server->Connect(clientAddr);
-  client->SetRecvCallback(MakeCallback(&YouRecv));
+   client->Connect(addr);
+   server->Connect(clientAddr);
+  client->SetRecvCallback(MakeCallback(&ClientRecv));
 
-  server->Bind();
-  server->Connect(addr);
-  server->SetRecvCallback(MakeCallback(&wuRecv));
+  server->SetRecvCallback(MakeCallback(&ServerRecv));
 
   Host A;
-  Host B;
+  //Host B;
   A.getkind(0);
   A.getptr(server);
-  A.setRemoteAddress(interfaces.GetAddress(1,0));
-  B.getkind(1);
-  B.getptr(client);
-  B.setRemoteAddress(interfaces.GetAddress(0,0));
+  //A.setRemoteAddress(interfaces.GetAddress(1,0));
+  // B.getkind(1);
+  // B.getptr(client);
+  //B.setRemoteAddress(interfaces.GetAddress(0,0));
   // A.write(123,456,10);
   A.run();
 
 
-  pointToPoint.EnablePcap ("sender", nodes.Get (0)->GetId (), 0);
-  pointToPoint.EnablePcap ("receiver", nodes.Get (1)->GetId (), 0);
+  // pointToPoint.EnablePcap ("sender", nodes.Get (0)->GetId (), 0);
+  // pointToPoint.EnablePcap ("receiver", nodes.Get (1)->GetId (), 0);
     // csmaHelper.EnablePcap("two", nodes);  
 
   Simulator::Run();
-  Simulator::Stop(Seconds(100.0));
+  Simulator::Stop(Seconds(10.0));
   Simulator::Destroy();
   return 0;
 }
